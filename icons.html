@@ -1,0 +1,196 @@
+<!-- Save this block as icons.html and open it in your browser -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Icon Generator - ShopAssist</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      background: #f1f5f9;
+      padding: 40px;
+      color: #0f172a;
+    }
+    h2 { margin-bottom: 8px; }
+    p { color: #64748b; margin-bottom: 24px; font-size: 14px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 20px;
+    }
+    .card {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
+    canvas {
+      border: 1px dashed #cbd5e1;
+      border-radius: 8px;
+      background: #f8fafc;
+    }
+    button {
+      background: #2563eb;
+      color: white;
+      border: none;
+      padding: 8px 14px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    button:hover { background: #1d4ed8; }
+    .instructions {
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      padding: 16px;
+      border-radius: 8px;
+      margin-bottom: 24px;
+      font-size: 14px;
+      color: #1e40af;
+    }
+  </style>
+</head>
+<body>
+
+<h2>ShopAssist Dashboard Icon Generator</h2>
+<p>Click "Download Icon" for each module, then place them inside an <strong>icons/</strong> folder on your server.</p>
+
+<div class="instructions">
+  📁 Make sure you create a folder named <code>icons</code> in the same directory as your dashboard PHP file, and save the files exactly as named below:
+  <ul style="margin-top: 8px; margin-left: 20px;">
+    <li>pos.png</li>
+    <li>reports.png</li>
+    <li>stock.png</li>
+    <li>clients.png</li>
+    <li>accounts.png</li>
+    <li>settings.png</li>
+    <li>logout.png</li>
+  </ul>
+</div>
+
+<div class="grid" id="iconGrid"></div>
+
+<script>
+  const icons = [
+    { name: 'pos.png', label: 'Point Of Sale', draw: (ctx) => {
+        ctx.fillStyle = '#2563eb';
+        // Shopping Cart Icon
+        ctx.fillRect(16, 22, 28, 20);
+        ctx.clearRect(20, 26, 6, 4);
+        ctx.clearRect(30, 26, 10, 4);
+        ctx.beginPath();
+        ctx.arc(22, 48, 4, 0, Math.PI * 2);
+        ctx.arc(38, 48, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillRect(8, 14, 8, 4);
+        ctx.fillRect(16, 14, 4, 10);
+      }},
+    { name: 'reports.png', label: 'Reports', draw: (ctx) => {
+        ctx.fillStyle = '#2563eb';
+        // Bar Chart Icon
+        ctx.fillRect(12, 36, 8, 16);
+        ctx.fillRect(24, 24, 8, 28);
+        ctx.fillRect(36, 14, 8, 38);
+        ctx.fillRect(10, 54, 38, 3);
+      }},
+    { name: 'stock.png', label: 'Stock', draw: (ctx) => {
+        ctx.fillStyle = '#2563eb';
+        // Box / Package Icon
+        ctx.beginPath();
+        ctx.moveTo(28, 10); ctx.lineTo(50, 20); ctx.lineTo(28, 30); ctx.lineTo(6, 20); ctx.closePath();
+        ctx.fill();
+        ctx.fillRect(8, 24, 18, 26);
+        ctx.fillRect(30, 24, 18, 26);
+        ctx.clearRect(25, 24, 4, 26);
+      }},
+    { name: 'clients.png', label: 'Clients', draw: (ctx) => {
+        ctx.fillStyle = '#2563eb';
+        // Users Icon
+        ctx.beginPath();
+        ctx.arc(20, 22, 8, 0, Math.PI * 2);
+        ctx.arc(38, 26, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(20, 42, 12, Math.PI, 0, false);
+        ctx.arc(38, 46, 10, Math.PI, 0, false);
+        ctx.fill();
+      }},
+    { name: 'accounts.png', label: 'Accounts', draw: (ctx) => {
+        ctx.fillStyle = '#2563eb';
+        // Wallet / Card Icon
+        ctx.fillRect(10, 18, 38, 28);
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillRect(36, 28, 8, 8);
+        ctx.fillStyle = '#2563eb';
+        ctx.beginPath();
+        ctx.arc(40, 32, 2, 0, Math.PI * 2);
+        ctx.fill();
+      }},
+    { name: 'settings.png', label: 'Settings', draw: (ctx) => {
+        ctx.fillStyle = '#2563eb';
+        // Gear Icon
+        ctx.beginPath();
+        ctx.arc(28, 28, 10, 0, Math.PI * 2);
+        ctx.lineWidth = 6;
+        ctx.strokeStyle = '#2563eb';
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(28, 28, 18, 0, Math.PI * 2);
+        ctx.lineWidth = 3;
+        ctx.stroke();
+      }},
+    { name: 'logout.png', label: 'Log-Out', draw: (ctx) => {
+        ctx.fillStyle = '#ef4444';
+        ctx.strokeStyle = '#ef4444';
+        // Logout Door Icon
+        ctx.lineWidth = 4;
+        ctx.strokeRect(14, 12, 18, 32);
+        ctx.beginPath();
+        ctx.moveTo(26, 28); ctx.lineTo(42, 28);
+        ctx.lineTo(36, 20); ctx.moveTo(42, 28); ctx.lineTo(36, 36);
+        ctx.stroke();
+      }}
+  ];
+
+  const grid = document.getElementById('iconGrid');
+
+  icons.forEach(item => {
+    const card = document.createElement('div');
+    card.className = 'card';
+
+    const canvas = document.createElement('canvas');
+    canvas.width = 64;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    item.draw(ctx);
+
+    const title = document.createElement('span');
+    title.style.fontSize = '13px';
+    title.style.fontWeight = '600';
+    title.innerText = item.label;
+
+    const btn = document.createElement('button');
+    btn.innerText = `Download ${item.name}`;
+    btn.onclick = () => {
+      const link = document.createElement('a');
+      link.download = item.name;
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    };
+
+    card.appendChild(canvas);
+    card.appendChild(title);
+    card.appendChild(btn);
+    grid.appendChild(card);
+  });
+</script>
+
+</body>
+</html>
