@@ -10,6 +10,44 @@ if (!isset($_SESSION['username'])) {
 
 include 'db.php';
 
+/* -------------------------------------------------------------
+ * Built-in SQL (discount feature)
+ * Adds the discount columns the first time this page loads.
+ * Safe to run repeatedly: it only alters a table when a column is missing.
+ * ----------------------------------------------------------- */
+function ensure_column(mysqli $conn, string $table, string $column, string $definition): void
+{
+    try {
+        $res = $conn->query("SHOW COLUMNS FROM `$table` LIKE '$column'");
+        if ($res && $res->num_rows === 0) {
+            $conn->query("ALTER TABLE `$table` ADD COLUMN `$column` $definition");
+        }
+    } catch (Throwable $ex) {
+        error_log("POS discount migration ($table.$column) failed: " . $ex->getMessage());
+    }
+}
+
+ensure_column($conn, 'sales', 'discount_type', "VARCHAR(10) NOT NULL DEFAULT 'none'");
+ensure_column($conn, 'sales', 'discount_value', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00');
+ensure_column($conn, 'sales', 'discount_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00');
+ensure_column($conn, 'sale_items', 'discount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00');
+
+// Who is selling? (managers/administrators get no discount limit)
+$pos_role = 'Cashier';
+$role_stmt = $conn->prepare('SELECT role FROM users WHERE username = ?');
+if ($role_stmt) {
+    $uname = (string)$_SESSION['username'];
+    $role_stmt->bind_param('s', $uname);
+    $role_stmt->execute();
+    $role_stmt->bind_result($fetched_role);
+    if ($role_stmt->fetch() && $fetched_role !== null) {
+        $pos_role = (string)$fetched_role;
+    }
+    $role_stmt->close();
+}
+$is_privileged = in_array(strtolower($pos_role), ['administrator', 'manager'], true);
+$cashier_max_pct = 10; // display/UX only; the real limit is enforced in checkout_process.php
+
 // Fetch stock items for page render
 $stock_result = $conn->query("SELECT * FROM stock WHERE qty > 0 ORDER BY name ASC");
 $stock_items = [];
@@ -251,6 +289,7 @@ while ($client = $client_result->fetch_assoc()) {
             font-size: 14px; background: #fff; color: var(--text-main);
         }
         .form-control:focus { outline: none; border-color: var(--forest); box-shadow: 0 0 0 4px var(--forest-soft); }
+        .form-control:disabled { background: #f3f6f4; color: #98a59d; }
 
         .pay-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
         .pay-option {
@@ -269,7 +308,33 @@ while ($client = $client_result->fetch_assoc()) {
         }
         .pay-option:has(input:focus-visible) { outline: 3px solid var(--gold); outline-offset: 2px; }
 
+        /* ---------- Discount ---------- */
+        .discount-box {
+            background: var(--gold-soft); border: 1px solid #efd58c; border-radius: 12px;
+            padding: 12px; display: flex; flex-direction: column; gap: 10px;
+        }
+        .discount-row { display: flex; align-items: center; gap: 8px; }
+        .discount-label { font-size: 12px; font-weight: 700; color: #6b4a07; flex-shrink: 0; }
+        .disc-seg { display: inline-flex; background: #fff; border: 1.5px solid #efd58c; border-radius: 10px; overflow: hidden; flex-shrink: 0; }
+        .disc-seg button {
+            border: none; background: transparent; padding: 8px 11px; font-size: 12.5px; font-weight: 800;
+            cursor: pointer; color: #6b4a07;
+        }
+        .disc-seg button.on { background: var(--gold); color: var(--forest-deep); }
+        .discount-box .form-control { padding: 8px 10px; }
+        .disc-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+        .disc-chips[hidden] { display: none; }
+        .disc-chip {
+            padding: 4px 11px; border-radius: 999px; border: 1.5px solid #efd58c; background: #fff;
+            font-size: 12px; font-weight: 800; color: #6b4a07; cursor: pointer;
+        }
+        .disc-chip:hover { background: var(--gold); color: var(--forest-deep); }
+        .disc-note { font-size: 11.5px; font-weight: 600; color: #6b4a07; }
+        .disc-note.err { color: var(--danger); }
+
         .summary-row { display: flex; justify-content: space-between; font-size: 14px; color: var(--text-muted); font-weight: 500; }
+        .summary-row.discount { color: var(--danger); font-weight: 700; }
+        .summary-row.discount[hidden] { display: none; }
         .summary-row.total {
             color: var(--text-main); font-size: 26px; font-weight: 800; letter-spacing: -0.03em;
             align-items: baseline; padding-top: 4px;
@@ -423,9 +488,35 @@ while ($client = $client_result->fetch_assoc()) {
                 </div>
             </div>
 
+            <!-- Discount -->
+            <div class="discount-box">
+                <div class="discount-row">
+                    <span class="discount-label">Discount</span>
+                    <div class="disc-seg" role="group" aria-label="Discount type">
+                        <button type="button" class="on" data-type="none">None</button>
+                        <button type="button" data-type="percent">%</button>
+                        <button type="button" data-type="fixed">₵</button>
+                    </div>
+                    <input type="number" id="discValue" class="form-control" min="0" step="0.01" value="0" disabled aria-label="Discount value">
+                </div>
+                <div class="disc-chips" id="discChips" hidden>
+                    <button type="button" class="disc-chip" data-pct="5">5%</button>
+                    <button type="button" class="disc-chip" data-pct="10">10%</button>
+                    <?php if ($is_privileged): ?>
+                        <button type="button" class="disc-chip" data-pct="15">15%</button>
+                        <button type="button" class="disc-chip" data-pct="20">20%</button>
+                    <?php endif; ?>
+                </div>
+                <div class="disc-note" id="discNote"></div>
+            </div>
+
             <div class="summary-row">
                 <span>Subtotal</span>
                 <span id="subtotalAmount">₵0.00</span>
+            </div>
+            <div class="summary-row discount" id="discountRow" hidden>
+                <span id="discountLabel">Discount</span>
+                <span id="discountAmountText">−₵0.00</span>
             </div>
             <div class="summary-row total">
                 <span>Total due</span>
@@ -452,12 +543,102 @@ while ($client = $client_result->fetch_assoc()) {
 <script>
     let cart = [];
 
+    // Discount state
+    const IS_PRIVILEGED = <?php echo $is_privileged ? 'true' : 'false'; ?>;
+    const CASHIER_MAX_PCT = <?php echo (int)$cashier_max_pct; ?>;
+    let discType = 'none';
+
     function esc(s) {
         const d = document.createElement('div');
         d.textContent = s;
         return d.innerHTML;
     }
 
+    const money = n => '₵' + (Math.round(n * 100) / 100).toFixed(2);
+
+    /* ---------- Discount helpers ---------- */
+    function cartSubtotal() {
+        return Math.round(cart.reduce((s, i) => s + Math.round(i.price * i.qty * 100) / 100, 0) * 100) / 100;
+    }
+
+    function discValueNum() {
+        return Math.max(0, parseFloat(document.getElementById('discValue').value) || 0);
+    }
+
+    function calcDiscount(sub) {
+        const v = discValueNum();
+        if (discType === 'percent') return Math.round(sub * Math.min(v, 100)) / 100;
+        if (discType === 'fixed') return Math.min(Math.round(v * 100) / 100, sub);
+        return 0;
+    }
+
+    function discountProblem(sub, amt) {
+        if (discType === 'none' || amt <= 0) return '';
+        if (!IS_PRIVILEGED && sub > 0 && (amt / sub * 100) > CASHIER_MAX_PCT + 0.0001) {
+            return 'Cashiers can give at most ' + CASHIER_MAX_PCT + '% off. Ask a manager.';
+        }
+        return '';
+    }
+
+    function resetDiscount() {
+        discType = 'none';
+        document.getElementById('discValue').value = 0;
+        document.getElementById('discValue').disabled = true;
+        document.getElementById('discChips').hidden = true;
+        document.querySelectorAll('.disc-seg button').forEach(b => b.classList.toggle('on', b.dataset.type === 'none'));
+    }
+
+    function updateTotals() {
+        const sub = cartSubtotal();
+        const amt = calcDiscount(sub);
+        const problem = discountProblem(sub, amt);
+        const total = Math.round((sub - amt) * 100) / 100;
+
+        document.getElementById('subtotalAmount').innerText = money(sub);
+        document.getElementById('totalAmount').innerText = money(total);
+
+        const row = document.getElementById('discountRow');
+        row.hidden = amt <= 0;
+        if (amt > 0) {
+            document.getElementById('discountLabel').innerText =
+                discType === 'percent' ? 'Discount (' + discValueNum() + '%)' : 'Discount';
+            document.getElementById('discountAmountText').innerText = '−' + money(amt);
+        }
+
+        const note = document.getElementById('discNote');
+        if (problem) {
+            note.innerText = problem;
+            note.classList.add('err');
+        } else {
+            note.innerText = IS_PRIVILEGED
+                ? 'Manager access: no discount limit.'
+                : 'Cashiers can give up to ' + CASHIER_MAX_PCT + '% off.';
+            note.classList.remove('err');
+        }
+
+        document.getElementById('completeBtn').disabled = cart.length === 0 || !!problem;
+    }
+
+    document.querySelectorAll('.disc-seg button').forEach(b => {
+        b.addEventListener('click', () => {
+            discType = b.dataset.type;
+            document.querySelectorAll('.disc-seg button').forEach(x => x.classList.toggle('on', x === b));
+            const input = document.getElementById('discValue');
+            input.disabled = discType === 'none';
+            document.getElementById('discChips').hidden = discType !== 'percent';
+            if (discType === 'none') input.value = 0; else input.focus();
+            updateTotals();
+        });
+    });
+    document.getElementById('discValue').addEventListener('input', updateTotals);
+    document.querySelectorAll('.disc-chip').forEach(c => {
+        c.addEventListener('click', () => {
+            document.getElementById('discValue').value = c.dataset.pct;
+            updateTotals();
+        });
+    });
+
+    /* ---------- Cart ---------- */
     function addToCart(item) {
         const existingIndex = cart.findIndex(ci => ci.id === item.id);
         if (existingIndex > -1) {
@@ -480,24 +661,18 @@ while ($client = $client_result->fetch_assoc()) {
 
     function renderCart() {
         const list = document.getElementById('cartItemsList');
-        const btn = document.getElementById('completeBtn');
-        const count = cart.reduce((n, i) => n + i.qty, 0);
-        document.getElementById('cartCount').innerText = count;
-        btn.disabled = cart.length === 0;
+        document.getElementById('cartCount').innerText = cart.reduce((n, i) => n + i.qty, 0);
 
         if (cart.length === 0) {
             list.innerHTML = '<div class="empty-cart" id="emptyCartText"><strong>Cart is empty</strong>Tap a product to add it.</div>';
-            document.getElementById('subtotalAmount').innerText = '₵0.00';
-            document.getElementById('totalAmount').innerText = '₵0.00';
+            updateTotals();
             return;
         }
 
         let html = '';
-        let total = 0;
 
         cart.forEach((item, index) => {
             const itemTotal = item.price * item.qty;
-            total += itemTotal;
 
             html += `
                 <div class="cart-item">
@@ -517,8 +692,7 @@ while ($client = $client_result->fetch_assoc()) {
         });
 
         list.innerHTML = html;
-        document.getElementById('subtotalAmount').innerText = '₵' + total.toFixed(2);
-        document.getElementById('totalAmount').innerText = '₵' + total.toFixed(2);
+        updateTotals();
     }
 
     function updateQty(index, val) {
@@ -543,6 +717,7 @@ while ($client = $client_result->fetch_assoc()) {
 
     function clearCart() {
         cart = [];
+        resetDiscount();
         renderCart();
     }
 
@@ -569,6 +744,7 @@ while ($client = $client_result->fetch_assoc()) {
         const clientId = document.getElementById('saleClient').value;
         const selectedPaymentEl = document.querySelector('input[name="payment_method"]:checked');
         const paymentMethod = selectedPaymentEl ? selectedPaymentEl.value : 'cash';
+        const soldCart = cart.map(i => ({...i}));
 
         fetch('checkout_process.php', {
             method: 'POST',
@@ -578,7 +754,9 @@ while ($client = $client_result->fetch_assoc()) {
             body: JSON.stringify({
                 cart: cart,
                 client_id: clientId ? parseInt(clientId) : null,
-                payment_method: paymentMethod
+                payment_method: paymentMethod,
+                discount_type: discType,
+                discount_value: discType === 'none' ? 0 : discValueNum()
             })
         })
             .then(response => response.json())
@@ -588,13 +766,20 @@ while ($client = $client_result->fetch_assoc()) {
                         <div class="r-meta">Receipt #${esc(String(data.sale_id))}</div>
                         <div class="r-meta">${new Date().toLocaleString()}</div>
                         <div class="r-meta" style="margin-bottom:10px;">Payment: ${paymentMethod.toUpperCase()}</div>`;
-                    let grandTotal = 0;
-                    cart.forEach(i => {
+                    soldCart.forEach(i => {
                         const t = i.price * i.qty;
-                        grandTotal += t;
                         receiptHtml += `<div class="r-line"><span>${esc(i.name)} × ${i.qty}</span><span>₵${t.toFixed(2)}</span></div>`;
                     });
-                    receiptHtml += `<div class="r-total"><strong>Total paid</strong><strong>₵${grandTotal.toFixed(2)}</strong></div>`;
+
+                    // Totals come from the server so the receipt matches what was saved
+                    const sub = Number(data.subtotal);
+                    const disc = Number(data.discount_amount) || 0;
+                    const tot = Number(data.total);
+                    if (disc > 0) {
+                        receiptHtml += `<div class="r-line r-meta" style="margin-top:10px;"><span>Subtotal</span><span>${money(sub)}</span></div>`;
+                        receiptHtml += `<div class="r-line"><span>Discount</span><span>−${money(disc)}</span></div>`;
+                    }
+                    receiptHtml += `<div class="r-total"><strong>Total paid</strong><strong>${money(tot)}</strong></div>`;
 
                     document.getElementById('receiptDetails').innerHTML = receiptHtml;
                     document.getElementById('receiptModal').style.display = 'flex';
@@ -612,6 +797,10 @@ while ($client = $client_result->fetch_assoc()) {
         document.getElementById('receiptModal').style.display = 'none';
         window.location.reload();
     }
+
+    // Initial render
+    resetDiscount();
+    renderCart();
 </script>
 </body>
 </html>

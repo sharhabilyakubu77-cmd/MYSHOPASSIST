@@ -23,14 +23,14 @@ global $conn;
  *             instead of the built-in badge.
  * ----------------------------------------------------------- */
 $methods = [
-        'momo'  => ['label' => 'MoMo',   'img' => 'icons/momo.png',
-                'aliases' => ['momo', 'mtn momo', 'mtn_momo', 'mtn-momo', 'mobile money', 'mobile_money', 'mobilemoney', 'mtn']],
-        'cash'  => ['label' => 'Cash',   'img' => 'icons/cash.png',
-                'aliases' => ['cash']],
-        'tcash' => ['label' => 'T-Cash', 'img' => 'icons/tcash.png',
-                'aliases' => ['tcash', 't-cash', 't cash', 't_cash', 'airteltigo', 'airteltigo money']],
-        'visa'  => ['label' => 'Visa',   'img' => 'icons/visa.png',
-                'aliases' => ['visa', 'card']],
+    'momo'  => ['label' => 'MoMo',   'img' => 'icons/momo.png',
+        'aliases' => ['momo', 'mtn momo', 'mtn_momo', 'mtn-momo', 'mobile money', 'mobile_money', 'mobilemoney', 'mtn']],
+    'cash'  => ['label' => 'Cash',   'img' => 'icons/cash.png',
+        'aliases' => ['cash']],
+    'tcash' => ['label' => 'T-Cash', 'img' => 'icons/tcash.png',
+        'aliases' => ['tcash', 't-cash', 't cash', 't_cash', 'airteltigo', 'airteltigo money']],
+    'visa'  => ['label' => 'Visa',   'img' => 'icons/visa.png',
+        'aliases' => ['visa', 'card']],
 ];
 
 /* -------------------------------------------------------------
@@ -86,7 +86,11 @@ function first_match(array $cols, array $candidates): ?string
 function detect_revenue_source(mysqli $conn): ?array
 {
     $sales = table_columns($conn, 'sales');
-    $direct = first_match($sales, ['total_amount', 'total', 'amount', 'grand_total']);
+    // Discounts: the net amount lives in sale_items (after discount), so prefer the line items
+    // over any sales.total_amount column, which may hold the pre-discount figure.
+    $direct = isset($sales['discount_amount'])
+        ? null
+        : first_match($sales, ['total_amount', 'total', 'amount', 'grand_total']);
     if ($direct !== null) {
         return ['join' => '', 'expr' => "s.`$direct`"];
     }
@@ -133,7 +137,7 @@ function fetch_totals(mysqli $conn, ?array $src, string $from, string $to, array
     }
     [$where, $types, $params] = sales_where($from, $to, $aliases);
     $stmt = $conn->prepare(
-            "SELECT COUNT(DISTINCT s.id), COALESCE(SUM({$src['expr']}), 0)
+        "SELECT COUNT(DISTINCT s.id), COALESCE(SUM({$src['expr']}), 0)
          FROM sales s {$src['join']} WHERE $where"
     );
     if ($stmt) {
@@ -154,7 +158,7 @@ function fetch_daily(mysqli $conn, ?array $src, string $from, string $to, array 
     }
     [$where, $types, $params] = sales_where($from, $to, $aliases);
     $stmt = $conn->prepare(
-            "SELECT DATE(s.created_at) AS d, COUNT(DISTINCT s.id), COALESCE(SUM({$src['expr']}), 0)
+        "SELECT DATE(s.created_at) AS d, COUNT(DISTINCT s.id), COALESCE(SUM({$src['expr']}), 0)
          FROM sales s {$src['join']} WHERE $where
          GROUP BY d ORDER BY d DESC"
     );
@@ -181,7 +185,7 @@ function fetch_by_method(mysqli $conn, ?array $src, string $from, string $to, ar
         return $out;
     }
     $stmt = $conn->prepare(
-            "SELECT LOWER(TRIM(s.payment_method)), COUNT(DISTINCT s.id), COALESCE(SUM({$src['expr']}), 0)
+        "SELECT LOWER(TRIM(s.payment_method)), COUNT(DISTINCT s.id), COALESCE(SUM({$src['expr']}), 0)
          FROM sales s {$src['join']}
          WHERE s.created_at >= ? AND s.created_at < ?
          GROUP BY 1"
@@ -272,7 +276,7 @@ function fetch_items(mysqli $conn, ?array $src, string $from, string $to, array 
     }
     [$where, $types, $params] = sales_where($from, $to, $aliases);
     $stmt = $conn->prepare(
-            "SELECT {$src['label']} AS item_name, COALESCE(SUM({$src['qty']}), 0), COALESCE(SUM({$src['amount']}), 0)
+        "SELECT {$src['label']} AS item_name, COALESCE(SUM({$src['qty']}), 0), COALESCE(SUM({$src['amount']}), 0)
          FROM sales s {$src['join']}
          WHERE $where
          GROUP BY {$src['group']}
@@ -299,24 +303,53 @@ function fetch_sales_list(mysqli $conn, ?array $src, string $from, string $to, a
         return $rows;
     }
     [$where, $types, $params] = sales_where($from, $to, $aliases);
+    $has_d = has_discount_col($conn);
     $stmt = $conn->prepare(
-            "SELECT s.id, s.created_at, s.payment_method, COALESCE(SUM({$src['expr']}), 0)
+        "SELECT s.id, s.created_at, s.payment_method, " . ($has_d ? 's.discount_amount' : '0') . ", COALESCE(SUM({$src['expr']}), 0)
          FROM sales s {$src['join']}
          WHERE $where
-         GROUP BY s.id, s.created_at, s.payment_method
+         GROUP BY s.id, s.created_at, s.payment_method" . ($has_d ? ', s.discount_amount' : '') . "
          ORDER BY s.created_at DESC, s.id DESC
          LIMIT 200"
     );
     if ($stmt) {
         $stmt->bind_param($types, ...$params);
         $stmt->execute();
-        $stmt->bind_result($id, $created, $pm, $sum);
+        $stmt->bind_result($id, $created, $pm, $disc, $sum);
         while ($stmt->fetch()) {
-            $rows[] = ['id' => (int)$id, 'created' => (string)$created, 'method' => (string)$pm, 'sum' => (float)$sum];
+            $rows[] = ['id' => (int)$id, 'created' => (string)$created, 'method' => (string)$pm, 'discount' => (float)$disc, 'sum' => (float)$sum];
         }
         $stmt->close();
     }
     return $rows;
+}
+
+function has_discount_col(mysqli $conn): bool
+{
+    static $has = null;
+    if ($has === null) {
+        $has = isset(table_columns($conn, 'sales')['discount_amount']);
+    }
+    return $has;
+}
+
+/** Total discount given on sales in the range (respecting the payment-method filter). */
+function fetch_discounts(mysqli $conn, string $from, string $to, array $aliases = []): float
+{
+    if (!has_discount_col($conn)) {
+        return 0.0;
+    }
+    [$where, $types, $params] = sales_where($from, $to, $aliases);
+    $total = 0.0;
+    $stmt = $conn->prepare("SELECT COALESCE(SUM(s.discount_amount), 0) FROM sales s WHERE $where");
+    if ($stmt) {
+        $stmt->bind_param($types, ...$params);
+        $stmt->execute();
+        $stmt->bind_result($total);
+        $stmt->fetch();
+        $stmt->close();
+    }
+    return (float)$total;
 }
 
 function fmt_qty(float $q): string
@@ -349,10 +382,10 @@ function method_icon(string $key, array $m): string
         }
     }
     $svg = [
-            'momo' => '<rect width="40" height="40" rx="9" fill="#FFCC00"/><text x="20" y="25" text-anchor="middle" font-family="Arial,sans-serif" font-weight="800" font-size="13" fill="#003366">MoMo</text>',
-            'cash' => '<rect width="40" height="40" rx="9" fill="#047857"/><rect x="7" y="12" width="26" height="16" rx="3" fill="none" stroke="#fff" stroke-width="2"/><circle cx="20" cy="20" r="4" fill="none" stroke="#fff" stroke-width="2"/><circle cx="11.5" cy="20" r="1.3" fill="#fff"/><circle cx="28.5" cy="20" r="1.3" fill="#fff"/>',
-            'tcash' => '<rect width="40" height="40" rx="9" fill="#1e3a8a"/><text x="20" y="24" text-anchor="middle" font-family="Arial,sans-serif" font-weight="800" font-size="10" fill="#fff">T-Cash</text><rect x="9" y="29" width="22" height="3" rx="1.5" fill="#ef4444"/>',
-            'visa' => '<rect x="1" y="1" width="38" height="38" rx="9" fill="#fff" stroke="#cbd5e1" stroke-width="2"/><text x="20" y="25" text-anchor="middle" font-family="Arial,sans-serif" font-weight="800" font-style="italic" font-size="13" fill="#1a1f71">VISA</text>',
+        'momo' => '<rect width="40" height="40" rx="9" fill="#FFCC00"/><text x="20" y="25" text-anchor="middle" font-family="Arial,sans-serif" font-weight="800" font-size="13" fill="#003366">MoMo</text>',
+        'cash' => '<rect width="40" height="40" rx="9" fill="#047857"/><rect x="7" y="12" width="26" height="16" rx="3" fill="none" stroke="#fff" stroke-width="2"/><circle cx="20" cy="20" r="4" fill="none" stroke="#fff" stroke-width="2"/><circle cx="11.5" cy="20" r="1.3" fill="#fff"/><circle cx="28.5" cy="20" r="1.3" fill="#fff"/>',
+        'tcash' => '<rect width="40" height="40" rx="9" fill="#1e3a8a"/><text x="20" y="24" text-anchor="middle" font-family="Arial,sans-serif" font-weight="800" font-size="10" fill="#fff">T-Cash</text><rect x="9" y="29" width="22" height="3" rx="1.5" fill="#ef4444"/>',
+        'visa' => '<rect x="1" y="1" width="38" height="38" rx="9" fill="#fff" stroke="#cbd5e1" stroke-width="2"/><text x="20" y="25" text-anchor="middle" font-family="Arial,sans-serif" font-weight="800" font-style="italic" font-size="13" fill="#1a1f71">VISA</text>',
     ];
     if (!isset($svg[$key])) {
         return '';
@@ -364,8 +397,8 @@ function change_badge(float $now, float $before): string
 {
     if ($before <= 0) {
         return $now > 0
-                ? '<span class="delta up">New activity</span>'
-                : '<span class="delta flat">No change</span>';
+            ? '<span class="delta up">New activity</span>'
+            : '<span class="delta flat">No change</span>';
     }
     $pct = (($now - $before) / $before) * 100;
     if (abs($pct) < 0.05) {
@@ -601,10 +634,10 @@ foreach ($items_sold as $it) {
 }
 
 $cal_rows = fetch_daily(
-        $conn, $source,
-        $cal_first->format('Y-m-d') . ' 00:00:00',
-        $cal_first->modify('first day of next month')->format('Y-m-d') . ' 00:00:00',
-        $aliases
+    $conn, $source,
+    $cal_first->format('Y-m-d') . ' 00:00:00',
+    $cal_first->modify('first day of next month')->format('Y-m-d') . ' 00:00:00',
+    $aliases
 );
 $cal_data = [];
 foreach ($cal_rows as $r) {
@@ -612,16 +645,18 @@ foreach ($cal_rows as $r) {
 }
 
 $average_sale = $current['count'] > 0 ? $current['sum'] / $current['count'] : 0.0;
+$discounts_given = fetch_discounts($conn, $from, $to, $aliases);
+$previous_discounts = fetch_discounts($conn, $prev_from, $prev_to, $aliases);
 
 /* -------------------------------------------------------------
  * URL builder (keeps the current filters unless overridden)
  * ----------------------------------------------------------- */
 
 $base = [
-        'start_date' => $start_date,
-        'end_date' => $end_date,
-        'method' => $method_key === 'all' ? '' : $method_key,
-        'cal' => $cal_month,
+    'start_date' => $start_date,
+    'end_date' => $end_date,
+    'method' => $method_key === 'all' ? '' : $method_key,
+    'cal' => $cal_month,
 ];
 $url = static function (array $override = []) use ($base): string {
     $q = array_filter(array_merge($base, $override), static fn($v) => $v !== '' && $v !== null);
@@ -653,11 +688,11 @@ if (($_GET['export'] ?? '') === 'csv') {
 
 $yesterday = date('Y-m-d', strtotime('-1 day'));
 $presets = [
-        ['Today', $today, $today],
-        ['Yesterday', $yesterday, $yesterday],
-        ['Last 7 days', date('Y-m-d', strtotime('-6 days')), $today],
-        ['This month', date('Y-m-01'), $today],
-        ['Last month', date('Y-m-01', strtotime('first day of last month')), date('Y-m-t', strtotime('last day of last month'))],
+    ['Today', $today, $today],
+    ['Yesterday', $yesterday, $yesterday],
+    ['Last 7 days', date('Y-m-d', strtotime('-6 days')), $today],
+    ['This month', date('Y-m-01'), $today],
+    ['Last month', date('Y-m-01', strtotime('first day of last month')), date('Y-m-t', strtotime('last day of last month'))],
 ];
 
 $max_daily = 0.0;
@@ -828,7 +863,7 @@ $next_month = $cal_first->modify('+1 month')->format('Y-m');
         .cal-card .btn { padding: 9px 12px; font-size: 13px; }
 
         /* ---------- Metrics ---------- */
-        .metrics { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 14px; margin-bottom: 20px; }
+        .metrics { display: grid; grid-template-columns: 1.4fr 1fr 1fr 1fr; gap: 14px; margin-bottom: 20px; }
         .metric {
             background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
             padding: 20px 22px; box-shadow: var(--shadow); display: flex; flex-direction: column; justify-content: space-between; min-height: 128px;
@@ -1047,6 +1082,11 @@ $next_month = $cal_first->modify('+1 month')->format('Y-m');
                         <h3>Average sale</h3>
                         <div class="value"><?= e(money($average_sale)) ?></div>
                     </div>
+                    <div class="metric">
+                        <h3>Discounts given</h3>
+                        <div class="value" style="color: var(--danger)"><?= e(money($discounts_given)) ?></div>
+                        <?= change_badge($discounts_given, $previous_discounts) ?>
+                    </div>
                 </div>
 
                 <div class="panel">
@@ -1153,6 +1193,7 @@ $next_month = $cal_first->modify('+1 month')->format('Y-m');
                                     <th scope="col">Sale #</th>
                                     <th scope="col">Date &amp; time</th>
                                     <th scope="col">Payment</th>
+                                    <th scope="col" class="num">Discount</th>
                                     <th scope="col" class="num">Amount</th>
                                     <th scope="col" class="num action">Action</th>
                                 </tr>
@@ -1163,6 +1204,7 @@ $next_month = $cal_first->modify('+1 month')->format('Y-m');
                                         <td>#<?= (int)$s['id'] ?></td>
                                         <td><?= e(date('j M Y, H:i', strtotime($s['created']))) ?></td>
                                         <td><span class="pill"><?= e($s['method']) ?></span></td>
+                                        <td class="num"><?= $s['discount'] > 0 ? e('−' . money($s['discount'])) : '—' ?></td>
                                         <td class="num"><?= e(money($s['sum'])) ?></td>
                                         <td class="num action">
                                             <form method="POST" action="reports.php"
@@ -1192,7 +1234,7 @@ $next_month = $cal_first->modify('+1 month')->format('Y-m');
 <!-- Payment method filter bar -->
 <nav class="method-bar" aria-label="Filter by payment method">
     <a class="mbtn<?= $method_key === 'all' ? ' active' : '' ?>" href="<?= e($url(['method' => ''])) ?>"
-            <?= $method_key === 'all' ? 'aria-current="true"' : '' ?>>
+        <?= $method_key === 'all' ? 'aria-current="true"' : '' ?>>
         <span class="all-icon" aria-hidden="true">All</span>
         <span>
             <span class="name">All methods</span>
@@ -1201,7 +1243,7 @@ $next_month = $cal_first->modify('+1 month')->format('Y-m');
     </a>
     <?php foreach ($methods as $key => $m): ?>
         <a class="mbtn<?= $method_key === $key ? ' active' : '' ?>" href="<?= e($url(['method' => $key])) ?>"
-                <?= $method_key === $key ? 'aria-current="true"' : '' ?>>
+            <?= $method_key === $key ? 'aria-current="true"' : '' ?>>
             <?= method_icon($key, $m) ?>
             <span>
                 <span class="name"><?= e($m['label']) ?></span>

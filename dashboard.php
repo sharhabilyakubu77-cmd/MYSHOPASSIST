@@ -46,11 +46,19 @@ $username = (string)$_SESSION['username'];
 $total_stock = (int)scalar($conn, 'SELECT COUNT(*) FROM stock');
 $total_clients = (int)scalar($conn, 'SELECT COUNT(*) FROM clients');
 $today_revenue = (float)scalar(
-        $conn,
-        'SELECT COALESCE(SUM(si.total), 0)
+    $conn,
+    'SELECT COALESCE(SUM(si.total), 0)
      FROM sales s JOIN sale_items si ON si.sale_id = s.id
      WHERE s.created_at >= CURDATE() AND s.created_at < CURDATE() + INTERVAL 1 DAY',
-        0.0
+    0.0
+);
+
+// Discounts given today (today's revenue above is already net of discounts)
+$today_discounts = (float)scalar(
+    $conn,
+    'SELECT COALESCE(SUM(discount_amount), 0) FROM sales
+     WHERE created_at >= CURDATE() AND created_at < CURDATE() + INTERVAL 1 DAY',
+    0.0
 );
 
 // Last 6 months that have sales, shown oldest -> newest.
@@ -58,7 +66,7 @@ $months = [];
 $revenues = [];
 try {
     $chart_result = $conn->query(
-            "SELECT month_label, monthly_revenue FROM (
+        "SELECT month_label, monthly_revenue FROM (
              SELECT DATE_FORMAT(MIN(s.created_at), '%b %Y') AS month_label,
                     DATE_FORMAT(s.created_at, '%Y-%m')      AS ym,
                     SUM(si.total)                           AS monthly_revenue
@@ -86,25 +94,25 @@ $session_start = is_int($session_start) ? $session_start : time();
 
 /* Inline SVG icons (stroke style) so the page doesn't depend on image files. */
 $icons = [
-        'pos'      => '<path d="M6 6h15l-1.5 9h-12z"/><path d="M6 6 5 3H2"/><circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/>',
-        'reports'  => '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
-        'stock'    => '<path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/>',
-        'clients'  => '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.3c2.2.7 3.5 2.7 3.5 5.7"/>',
-        'settings' => '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
-        'logout'   => '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/>',
-        'box'      => '<path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/>',
-        'cash'     => '<rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.8"/><path d="M6 12h.01M18 12h.01"/>',
-        'shield'   => '<path d="M12 3 4 6v6c0 4.5 3.2 7.8 8 9 4.8-1.2 8-4.5 8-9V6z"/><path d="m9 12 2 2 4-4"/>',
+    'pos'      => '<path d="M6 6h15l-1.5 9h-12z"/><path d="M6 6 5 3H2"/><circle cx="9" cy="20" r="1.5"/><circle cx="18" cy="20" r="1.5"/>',
+    'reports'  => '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+    'stock'    => '<path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/>',
+    'clients'  => '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.3c2.2.7 3.5 2.7 3.5 5.7"/>',
+    'settings' => '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+    'logout'   => '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/>',
+    'box'      => '<path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/>',
+    'cash'     => '<rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.8"/><path d="M6 12h.01M18 12h.01"/>',
+    'shield'   => '<path d="M12 3 4 6v6c0 4.5 3.2 7.8 8 9 4.8-1.2 8-4.5 8-9V6z"/><path d="m9 12 2 2 4-4"/>',
 ];
 $icon = static fn(string $name, int $size = 22): string =>
-        '<svg viewBox="0 0 24 24" width="' . $size . '" height="' . $size . '" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' . $icons[$name] . '</svg>';
+    '<svg viewBox="0 0 24 24" width="' . $size . '" height="' . $size . '" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' . $icons[$name] . '</svg>';
 
 $modules = [
-        ['pos.php',      'pos',      'Point of Sale', 'Ring up sales',        'blue'],
-        ['reports.php',  'reports',  'Reports',       'Sales & reversals',    'violet'],
-        ['stock.php',    'stock',    'Stock',         'Inventory levels',     'amber'],
-        ['client.php',   'clients',  'Clients',       'Customer records',     'teal'],
-        ['settings.php', 'settings', 'Settings',      'System & users',       'slate'],
+    ['pos.php',      'pos',      'Point of Sale', 'Ring up sales',        'blue'],
+    ['reports.php',  'reports',  'Reports',       'Sales & reversals',    'violet'],
+    ['stock.php',    'stock',    'Stock',         'Inventory levels',     'amber'],
+    ['client.php',   'clients',  'Clients',       'Customer records',     'teal'],
+    ['settings.php', 'settings', 'Settings',      'System & users',       'slate'],
 ];
 ?>
 <!DOCTYPE html>
@@ -217,6 +225,7 @@ $modules = [
         }
         .stat-label { font-size: 11px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; color: var(--muted); }
         .stat-value { font-size: 24px; font-weight: 800; margin-top: 2px; font-variant-numeric: tabular-nums; letter-spacing: -.3px; }
+        .stat-sub { font-size: 11px; font-weight: 600; color: #c8372d; margin-top: 3px; }
         .stat-value.small { font-size: 16px; color: var(--success); margin-top: 6px; }
 
         /* colour themes */
@@ -295,7 +304,9 @@ $modules = [
 
         <div class="user-card">
             <div class="label">Signed in as</div>
-            <div class="avatar"><?= e(strtoupper(substr($username, 0, 1))) ?></div>
+            <div class="avatar"><?= substr($username, 0, 1)
+                    |> strtoupper(...)
+                    |> e(...) ?></div>
             <div class="name"><?= e($username) ?></div>
             <div class="meta">
                 Session started<br>
@@ -339,6 +350,9 @@ $modules = [
             <div>
                 <div class="stat-label">Today's sales</div>
                 <div class="stat-value">GH₵ <?= number_format($today_revenue, 2) ?></div>
+                <?php if ($today_discounts > 0): ?>
+                    <div class="stat-sub">after GH₵ <?= number_format($today_discounts, 2) ?> in discounts</div>
+                <?php endif; ?>
             </div>
         </div>
         <div class="stat">
