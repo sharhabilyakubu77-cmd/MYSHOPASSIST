@@ -61,6 +61,13 @@ $today_discounts = (float)scalar(
     0.0
 );
 
+$month_discounts = (float)scalar(
+    $conn,
+    'SELECT COALESCE(SUM(discount_amount), 0) FROM sales
+     WHERE created_at >= DATE_FORMAT(CURDATE(), \'%Y-%m-01\') AND created_at < CURDATE() + INTERVAL 1 DAY',
+    0.0
+);
+
 // Last 6 months that have sales, shown oldest -> newest.
 $months = [];
 $revenues = [];
@@ -213,7 +220,7 @@ $modules = [
         .pill .live { width: 8px; height: 8px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 4px rgba(22, 163, 74, .15); }
 
         /* ---------- Stats ---------- */
-        .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; }
+        .stats { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 18px; }
         .stat {
             background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
             padding: 20px; box-shadow: var(--shadow);
@@ -304,9 +311,7 @@ $modules = [
 
         <div class="user-card">
             <div class="label">Signed in as</div>
-            <div class="avatar"><?= substr($username, 0, 1)
-                    |> strtoupper(...)
-                    |> e(...) ?></div>
+            <div class="avatar"><?= e(strtoupper(substr($username, 0, 1))) ?></div>
             <div class="name"><?= e($username) ?></div>
             <div class="meta">
                 Session started<br>
@@ -348,11 +353,19 @@ $modules = [
         <div class="stat">
             <div class="stat-icon c-green"><?= $icon('cash') ?></div>
             <div>
-                <div class="stat-label">Today's sales</div>
+                <div class="stat-label">Today's sales (net)</div>
                 <div class="stat-value">GH₵ <?= number_format($today_revenue, 2) ?></div>
                 <?php if ($today_discounts > 0): ?>
                     <div class="stat-sub">after GH₵ <?= number_format($today_discounts, 2) ?> in discounts</div>
                 <?php endif; ?>
+            </div>
+        </div>
+        <div class="stat">
+            <div class="stat-icon c-amber"><?= $icon('cash') ?></div>
+            <div>
+                <div class="stat-label">Discounts today</div>
+                <div class="stat-value" style="color:#c8372d">GH₵ <?= number_format($today_discounts, 2) ?></div>
+                <div class="stat-sub" style="color:#66756d">This month: GH₵ <?= number_format($month_discounts, 2) ?></div>
             </div>
         </div>
         <div class="stat">

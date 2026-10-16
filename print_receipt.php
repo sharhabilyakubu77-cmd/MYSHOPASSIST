@@ -96,16 +96,40 @@ $stmt->close();
             <td>Item #<?php echo htmlspecialchars($item['product_id'] ?? 'N/A'); ?></td>
             <td style="text-align: center;"><?php echo $item['qty']; ?></td>
             <td style="text-align: right;">₵<?php echo number_format($item['price'], 2); ?></td>
-            <td style="text-align: right;">₵<?php echo number_format($item['total'], 2); ?></td>
+            <td style="text-align: right;">₵<?php echo number_format((float)$item['price'] * (int)$item['qty'], 2); ?></td>
         </tr>
     <?php endforeach; ?>
     </tbody>
 </table>
 
+<?php
+// Line totals above are gross (qty x price). sale_items.total holds the NET amount after discount.
+$subtotal_calc = 0.0;
+foreach ($items as $it) {
+    $subtotal_calc += (float)$it['price'] * (int)$it['qty'];
+}
+$net_total = array_sum(array_map(static fn($it) => (float)$it['total'], $items));
+$discount_amt = (float)($sale['discount_amount'] ?? 0);
+if ($discount_amt <= 0 && $subtotal_calc - $net_total > 0.004) {
+    $discount_amt = round($subtotal_calc - $net_total, 2); // fallback if only line items carry the discount
+}
+$disc_label = (($sale['discount_type'] ?? 'none') === 'percent' && (float)($sale['discount_value'] ?? 0) > 0)
+    ? ' (' . rtrim(rtrim(number_format((float)$sale['discount_value'], 2), '0'), '.') . '%)' : '';
+?>
 <div class="totals">
+    <?php if ($discount_amt > 0): ?>
+        <div class="total-row" style="font-weight: normal; font-size: 13px;">
+            <span>Subtotal:</span>
+            <span>₵<?php echo number_format($subtotal_calc, 2); ?></span>
+        </div>
+        <div class="total-row" style="font-weight: normal; font-size: 13px;">
+            <span>Discount<?php echo $disc_label; ?>:</span>
+            <span>-₵<?php echo number_format($discount_amt, 2); ?></span>
+        </div>
+    <?php endif; ?>
     <div class="total-row">
         <span>TOTAL:</span>
-        <span>₵<?php echo number_format($sale['total_amount'] ?? array_sum(array_column($items, 'total')), 2); ?></span>
+        <span>₵<?php echo number_format($net_total, 2); ?></span>
     </div>
 </div>
 

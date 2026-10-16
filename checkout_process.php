@@ -19,6 +19,23 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     exit();
 }
 
+// Make sure the discount columns exist (safe to repeat; only adds what is missing)
+foreach ([
+             ['sales', 'discount_type', "VARCHAR(10) NOT NULL DEFAULT 'none'"],
+             ['sales', 'discount_value', 'DECIMAL(10,2) NOT NULL DEFAULT 0.00'],
+             ['sales', 'discount_amount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00'],
+             ['sale_items', 'discount', 'DECIMAL(12,2) NOT NULL DEFAULT 0.00'],
+         ] as [$t, $c, $def]) {
+    try {
+        $chk = $conn->query("SHOW COLUMNS FROM `$t` LIKE '$c'");
+        if ($chk && $chk->num_rows === 0) {
+            $conn->query("ALTER TABLE `$t` ADD COLUMN `$c` $def");
+        }
+    } catch (Throwable $ex) {
+        error_log("Discount migration ($t.$c) failed: " . $ex->getMessage());
+    }
+}
+
 $data = json_decode(file_get_contents('php://input'), true);
 if (!$data || empty($data['cart'])) {
     echo json_encode(['success' => false, 'error' => 'Cart is empty']);
@@ -32,10 +49,7 @@ $cart           = $data['cart'];
 
 // Discount input (never trust a client-calculated amount; only type + value are used)
 $discount_type  = in_array(($data['discount_type'] ?? 'none'), ['percent', 'fixed'], true) ? $data['discount_type'] : 'none';
-$discount_value = $discount_type === 'none' ? 0.0 : 0
-        |> floatval(...)
-        |> (fn($x) => round($x, 2))
-        |> (fn($x) => max(0.0, $x));
+$discount_value = $discount_type === 'none' ? 0.0 : max(0.0, round(floatval($data['discount_value'] ?? 0), 2));
 
 // Look up the cashier's role
 $role = 'Cashier';

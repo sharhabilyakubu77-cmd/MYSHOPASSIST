@@ -352,6 +352,27 @@ function fetch_discounts(mysqli $conn, string $from, string $to, array $aliases 
     return (float)$total;
 }
 
+/** Discounts per day (from sales alone, so line-item joins can never double count). */
+function fetch_daily_discounts(mysqli $conn, string $from, string $to, array $aliases = []): array
+{
+    $out = [];
+    if (!has_discount_col($conn)) {
+        return $out;
+    }
+    [$where, $types, $params] = sales_where($from, $to, $aliases);
+    $stmt = $conn->prepare("SELECT DATE(s.created_at), COALESCE(SUM(s.discount_amount), 0) FROM sales s WHERE $where GROUP BY DATE(s.created_at)");
+    if ($stmt) {
+        $stmt->bind_param($types, ...$params);
+        $stmt->execute();
+        $stmt->bind_result($day, $amt);
+        while ($stmt->fetch()) {
+            $out[(string)$day] = (float)$amt;
+        }
+        $stmt->close();
+    }
+    return $out;
+}
+
 function fmt_qty(float $q): string
 {
     return floor($q) == $q ? number_format($q) : rtrim(rtrim(number_format($q, 2), '0'), '.');
@@ -647,6 +668,7 @@ foreach ($cal_rows as $r) {
 $average_sale = $current['count'] > 0 ? $current['sum'] / $current['count'] : 0.0;
 $discounts_given = fetch_discounts($conn, $from, $to, $aliases);
 $previous_discounts = fetch_discounts($conn, $prev_from, $prev_to, $aliases);
+$daily_discounts = fetch_daily_discounts($conn, $from, $to, $aliases);
 
 /* -------------------------------------------------------------
  * URL builder (keeps the current filters unless overridden)
@@ -673,11 +695,11 @@ if (($_GET['export'] ?? '') === 'csv') {
     header('Content-Disposition: attachment; filename="sales_' . $start_date . '_to_' . $end_date . $suffix . '.csv"');
     $out = fopen('php://output', 'w');
     fwrite($out, "\xEF\xBB\xBF");
-    fputcsv($out, ['Date', 'Payment method', 'Transactions', 'Revenue (GHS)']);
+    fputcsv($out, ['Date', 'Payment method', 'Transactions', 'Discounts (GHS)', 'Net revenue (GHS)']);
     foreach (array_reverse($daily) as $row) {
-        fputcsv($out, [$row['day'], $method_label, $row['count'], number_format($row['sum'], 2, '.', '')]);
+        fputcsv($out, [$row['day'], $method_label, $row['count'], number_format($daily_discounts[$row['day']] ?? 0, 2, '.', ''), number_format($row['sum'], 2, '.', '')]);
     }
-    fputcsv($out, ['Total', $method_label, $current['count'], number_format($current['sum'], 2, '.', '')]);
+    fputcsv($out, ['Total', $method_label, $current['count'], number_format($discounts_given, 2, '.', ''), number_format($current['sum'], 2, '.', '')]);
     fclose($out);
     exit;
 }
@@ -1069,7 +1091,7 @@ $next_month = $cal_first->modify('+1 month')->format('Y-m');
             <section>
                 <div class="metrics">
                     <div class="metric">
-                        <h3>Total revenue</h3>
+                        <h3>Net revenue (after discounts)</h3>
                         <div class="value money"><?= e(money($current['sum'])) ?></div>
                         <?= change_badge($current['sum'], $previous['sum']) ?>
                     </div>
@@ -1106,7 +1128,8 @@ $next_month = $cal_first->modify('+1 month')->format('Y-m');
                             <tr>
                                 <th scope="col">Date</th>
                                 <th scope="col" class="num">Transactions</th>
-                                <th scope="col" class="num">Revenue</th>
+                                <th scope="col" class="num">Discounts</th>
+                                <th scope="col" class="num">Net revenue</th>
                                 <th scope="col" class="bar-cell"><span class="sr-only">Share of busiest day</span></th>
                             </tr>
                             </thead>
@@ -1116,6 +1139,8 @@ $next_month = $cal_first->modify('+1 month')->format('Y-m');
                                 <tr>
                                     <td><?= e(date('D, j M Y', strtotime($row['day']))) ?></td>
                                     <td class="num"><?= number_format($row['count']) ?></td>
+                                    <?php $dd = $daily_discounts[$row['day']] ?? 0.0; ?>
+                                    <td class="num" style="color: var(--danger)"><?= $dd > 0 ? e('−' . money($dd)) : '—' ?></td>
                                     <td class="num"><?= e(money($row['sum'])) ?></td>
                                     <td class="bar-cell"><div class="bar" aria-hidden="true"><span style="width: <?= (int)$pct ?>%"></span></div></td>
                                 </tr>
@@ -1125,6 +1150,7 @@ $next_month = $cal_first->modify('+1 month')->format('Y-m');
                             <tr>
                                 <td>Total</td>
                                 <td class="num"><?= number_format($current['count']) ?></td>
+                                <td class="num" style="color: var(--danger)"><?= $discounts_given > 0 ? e('−' . money($discounts_given)) : '—' ?></td>
                                 <td class="num"><?= e(money($current['sum'])) ?></td>
                                 <td></td>
                             </tr>
